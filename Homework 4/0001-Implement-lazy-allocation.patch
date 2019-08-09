@@ -1,0 +1,94 @@
+From d3910c02d1a55528664af79ce2e7de9089dee070 Mon Sep 17 00:00:00 2001
+From: Mohammed Touhid Chowdhury <yomtc405@nyu.edu>
+Date: Sun, 12 Nov 2017 11:43:59 -0500
+Subject: [PATCH] Implement lazy allocation
+
+---
+ defs.h    |  1 +
+ sysproc.c |  5 ++---
+ trap.c    | 10 ++++++++++
+ vm.c      |  5 +++--
+ 4 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/defs.h b/defs.h
+index b47372b..99c0a82 100644
+--- a/defs.h
++++ b/defs.h
+@@ -156,6 +156,7 @@ void            idtinit(void);
+ extern uint     ticks;
+ void            tvinit(void);
+ extern struct spinlock tickslock;
++extern int    mappages(pde_t*, void*, uint, uint, int);
+ 
+ // uart.c
+ void            uartinit(void);
+diff --git a/sysproc.c b/sysproc.c
+index 027a5e5..881dd9b 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -41,7 +41,7 @@ sys_getpid(void)
+ {
+   return proc->pid;
+ }
+-
++//part 2 
+ int
+ sys_sbrk(void)
+ {
+@@ -51,8 +51,7 @@ sys_sbrk(void)
+   if(argint(0, &n) < 0)
+     return -1;
+   addr = proc->sz;
+-  if(growproc(n) < 0)
+-    return -1;
++  proc->sz = addr+n;
+   return addr;
+ }
+ 
+diff --git a/trap.c b/trap.c
+index 3f80145..63c46a1 100644
+--- a/trap.c
++++ b/trap.c
+@@ -46,6 +46,16 @@ trap(struct trapframe *tf)
+     return;
+   }
+ 
++  if(tf->trapno == T_PGFLT){
++   char* memory;
++   uint pg;
++   pg = PGROUNDDOWN(rcr2());
++   memory = kalloc();
++   memset(memory, 0, PGSIZE);
++   mappages(proc->pgdir, (char*)pg, PGSIZE, v2p(memory), PTE_W|PTE_U);
++   return;
++  }
++
+   switch(tf->trapno){
+   case T_IRQ0 + IRQ_TIMER:
+     if(cpu->id == 0){
+diff --git a/vm.c b/vm.c
+index 5326d14..544e5e7 100644
+--- a/vm.c
++++ b/vm.c
+@@ -67,7 +67,7 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
+ // Create PTEs for virtual addresses starting at va that refer to
+ // physical addresses starting at pa. va and size might not
+ // be page-aligned.
+-static int
++int
+ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+ {
+   char *a, *last;
+@@ -320,7 +320,8 @@ copyuvm(pde_t *pgdir, uint sz)
+     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
+       panic("copyuvm: pte should exist");
+     if(!(*pte & PTE_P))
+-      panic("copyuvm: page not present");
++      //panic("copyuvm: page not present");
++      continue;
+     pa = PTE_ADDR(*pte);
+     flags = PTE_FLAGS(*pte);
+     if((mem = kalloc()) == 0)
+-- 
+1.9.1
+

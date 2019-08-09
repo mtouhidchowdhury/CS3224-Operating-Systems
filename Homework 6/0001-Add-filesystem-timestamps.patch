@@ -1,0 +1,186 @@
+From 99fea2a06d42e1adaff1721d05279d0bd1fc077c Mon Sep 17 00:00:00 2001
+From: Mohammed Touhid Chowdhury <yomtc405@nyu.edu>
+Date: Sun, 17 Dec 2017 13:26:25 -0500
+Subject: [PATCH] Add filesystem timestamps
+
+---
+ file.h    |  1 +
+ fs.c      |  4 ++++
+ fs.h      |  5 +++--
+ ls.c      |  5 +++--
+ mkfs.c    | 12 ++++++++++++
+ stat.h    |  2 ++
+ sysfile.c |  1 +
+ 7 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/file.h b/file.h
+index 5a4a463..fe96f51 100644
+--- a/file.h
++++ b/file.h
+@@ -20,6 +20,7 @@ struct inode {
+   short major;
+   short minor;
+   short nlink;
++  struct rtcdate date;
+   uint size;
+   uint addrs[NDIRECT+1];
+ };
+diff --git a/fs.c b/fs.c
+index 025b326..580b3c0 100644
+--- a/fs.c
++++ b/fs.c
+@@ -11,6 +11,7 @@
+ 
+ #include "types.h"
+ #include "defs.h"
++#include "date.h"
+ #include "param.h"
+ #include "stat.h"
+ #include "mmu.h"
+@@ -207,6 +208,7 @@ iupdate(struct inode *ip)
+   dip->type = ip->type;
+   dip->major = ip->major;
+   dip->minor = ip->minor;
++  dip->date = ip->date;
+   dip->nlink = ip->nlink;
+   dip->size = ip->size;
+   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
+@@ -285,6 +287,7 @@ ilock(struct inode *ip)
+     ip->major = dip->major;
+     ip->minor = dip->minor;
+     ip->nlink = dip->nlink;
++    ip->date = dip->date;
+     ip->size = dip->size;
+     memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
+     brelse(bp);
+@@ -426,6 +429,7 @@ stati(struct inode *ip, struct stat *st)
+   st->ino = ip->inum;
+   st->type = ip->type;
+   st->nlink = ip->nlink;
++  st->date = ip->date;
+   st->size = ip->size;
+ }
+ 
+diff --git a/fs.h b/fs.h
+index e1d7d09..a4c6d84 100644
+--- a/fs.h
++++ b/fs.h
+@@ -1,7 +1,7 @@
+ // On-disk file system format. 
+ // Both the kernel and user programs use this header file.
+ 
+-
++#include "date.h"
+ #define ROOTINO 1  // root i-number
+ #define BSIZE 512  // block size
+ 
+@@ -20,7 +20,7 @@ struct superblock {
+   uint bmapstart;    // Block number of first free map block
+ };
+ 
+-#define NDIRECT 12
++#define NDIRECT 22
+ #define NINDIRECT (BSIZE / sizeof(uint))
+ #define MAXFILE (NDIRECT + NINDIRECT)
+ 
+@@ -30,6 +30,7 @@ struct dinode {
+   short major;          // Major device number (T_DEV only)
+   short minor;          // Minor device number (T_DEV only)
+   short nlink;          // Number of links to inode in file system
++  struct rtcdate date;
+   uint size;            // Size of file (bytes)
+   uint addrs[NDIRECT+1];   // Data block addresses
+ };
+diff --git a/ls.c b/ls.c
+index b6ddd7f..1138d18 100644
+--- a/ls.c
++++ b/ls.c
+@@ -43,7 +43,7 @@ ls(char *path)
+   
+   switch(st.type){
+   case T_FILE:
+-    printf(1, "%s %d %d %d\n", fmtname(path), st.type, st.ino, st.size);
++    printf(1, "%s %d %d %d %d/%d/%d %d:%d:%d\n", fmtname(path), st.type, st.ino, st.size, st.date.month, st.date.day, st.date.year, st.date.hour, st.date.minute, st.date.second);
+     break;
+   
+   case T_DIR:
+@@ -63,7 +63,8 @@ ls(char *path)
+         printf(1, "ls: cannot stat %s\n", buf);
+         continue;
+       }
+-      printf(1, "%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
++      printf(1, "%s %d %d %d %d/%d/%d %d:%d:%d\n", fmtname(buf), st.type, st.ino, st.size, st.date.month, st.date.day, st.date.year, st.date.hour, st.date.minute, st.date.second);
++
+     }
+     break;
+   }
+diff --git a/mkfs.c b/mkfs.c
+index 0a10754..3c4c298 100644
+--- a/mkfs.c
++++ b/mkfs.c
+@@ -10,6 +10,7 @@
+ #include "fs.h"
+ #include "stat.h"
+ #include "param.h"
++#include "time.h"
+ 
+ #ifndef static_assert
+ #define static_assert(a, b) do { switch (0) case 0: case (a): ; } while (0)
+@@ -266,6 +267,11 @@ iappend(uint inum, void *xp, int n)
+   off = xint(din.size);
+   // printf("append inum %d at off %d sz %d\n", inum, off, n);
+   while(n > 0){
++    struct tm* stmp;
++    time_t rtime;
++    time(&rtime);
++    stmp = gmtime(&rtime);
++
+     fbn = off / BSIZE;
+     assert(fbn < MAXFILE);
+     if(fbn < NDIRECT){
+@@ -291,6 +297,12 @@ iappend(uint inum, void *xp, int n)
+     n -= n1;
+     off += n1;
+     p += n1;
++    din.date.second = stmp->tm_sec;
++    din.date.minute = stmp->tm_min;
++    din.date.hour = stmp->tm_hour;
++    din.date.year = stmp->tm_year+1900;
++    din.date.day = stmp->tm_mday;
++    din.date.month = stmp->tm_mon+1;
+   }
+   din.size = xint(off);
+   winode(inum, &din);
+diff --git a/stat.h b/stat.h
+index 8a80933..3d0eddc 100644
+--- a/stat.h
++++ b/stat.h
+@@ -1,11 +1,13 @@
+ #define T_DIR  1   // Directory
+ #define T_FILE 2   // File
+ #define T_DEV  3   // Device
++#include "date.h"
+ 
+ struct stat {
+   short type;  // Type of file
+   int dev;     // File system's disk device
+   uint ino;    // Inode number
+   short nlink; // Number of links to file
++  struct rtcdate date;
+   uint size;   // Size of file in bytes
+ };
+diff --git a/sysfile.c b/sysfile.c
+index 2209f6e..52646a5 100644
+--- a/sysfile.c
++++ b/sysfile.c
+@@ -262,6 +262,7 @@ create(char *path, short type, short major, short minor)
+   ip->major = major;
+   ip->minor = minor;
+   ip->nlink = 1;
++  cmostime(&ip->date);
+   iupdate(ip);
+ 
+   if(type == T_DIR){  // Create . and .. entries.
+-- 
+1.9.1
+
